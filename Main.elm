@@ -6,6 +6,8 @@ import Html.Events exposing (..)
 import Html.Attributes exposing (..)
 import Net
 import Json.Decode exposing (decodeString, list, float)
+import NetSvg exposing (display)
+import Maybe exposing (..)
 
 
 main : Program Never Model Msg
@@ -25,8 +27,8 @@ main =
 type alias Model =
   { net : Net.Net,
     result : List Float,
-    input : List (List Float),
-    target : List (List Float),
+    input : String,
+    target : String,
     error : Float,
     backpropIter : Int
   }
@@ -34,7 +36,7 @@ type alias Model =
 
 init : (Model, Cmd Msg)
 init =
-  (Model (Net.createNetDeterministic 2 2 1) [0] [[0, 0], [1, 0], [0, 1], [1, 1]] [[0], [1], [1], [0]] 0 10000, Cmd.none)
+  (Model (Net.createNetDeterministic 2 2 1) [0] "[[0, 0], [1, 0], [0, 1], [1, 1]]" "[[0], [1], [1], [0]]" 0 10000, Cmd.none)
 
 
 
@@ -61,53 +63,28 @@ update msg model =
       ({model | net = newNet}, Cmd.none)
 
     NewInput str ->
-        ({model | input = stringToList str}, Cmd.none)
+        ({model | input = str}, Cmd.none)
 
     NewTarget str ->
-        ({model | target = stringToList str}, Cmd.none)
+        ({model | target = str}, Cmd.none)
 
     Forward ->
         let
-            inputHead = List.head model.input
-            input = case inputHead of
-                Just n ->
-                    n
-                Nothing ->
-                    [0,0]
-            targetHead = List.head model.target
-            target = case targetHead of
-                Just n ->
-                    n
-                Nothing ->
-                    [0]
+            input = withDefault [0,0] (List.head (stringToList model.input))
+            target = withDefault [0] (List.head (stringToList model.target))
         in
             ({model | result = Net.forwardPass model.net input, error = Net.getTotalError model.net input target}, Cmd.none)
 
     Backprop ->
         let
-            inputHead = List.head model.input
-            input = case inputHead of
-                Just n ->
-                    n
-                Nothing ->
-                    [0,0]
-            targetHead = List.head model.target
-            target = case targetHead of
-                Just n ->
-                    n
-                Nothing ->
-                    [0]
+            input = withDefault [0,0] (List.head (stringToList model.input))
+            target = withDefault [0] (List.head (stringToList model.target))
         in
-            ({model | net = Net.backpropagateSet model.net 1 model.input model.target model.backpropIter, error = Net.getTotalError model.net input target}, Cmd.none)
+            ({model | net = Net.backpropagateSet model.net 1 (stringToList model.input) (stringToList model.target) model.backpropIter, error = Net.getTotalError model.net input target}, Cmd.none)
 
     NewBackprop str ->
         let
-            iterCase = String.toInt str
-            iter = case iterCase of
-                Ok n ->
-                    n
-                Err _ ->
-                    0
+            iter = Result.withDefault 0 (String.toInt str)
         in
             ({model | backpropIter = iter}, Cmd.none)
 
@@ -142,4 +119,5 @@ view model =
     , button [ onClick Backprop ] [ text "Backprop" ]
     , input [ onInput NewBackprop, value (toString model.backpropIter) ] []
     , h2 [] [ text (toString model.error) ]
+    , display model.net
     ]
