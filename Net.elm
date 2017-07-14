@@ -1,6 +1,5 @@
 module Net exposing (..)
 import Random
-import Debug
 
 type alias Net =
     {
@@ -87,8 +86,7 @@ splitList input size =
 splitListByMod : List a -> Int -> List(List a)
 splitListByMod input size =
     let
-        indexes = List.range 0 ((List.length input)-1)
-        indexedList = List.map2 (\index item -> (index, item)) indexes input
+        indexedList = List.indexedMap (\index item -> (index, item)) input
     in
         List.map (\i -> List.filterMap (\(index, element) ->
             if index%size == i then
@@ -161,14 +159,11 @@ backpropagateSingle net learning inputs targets iterations =
     else
         net
 
-backpropagateSet : Net -> Float -> List (List Float) -> List (List Float) -> Int -> Net
-backpropagateSet net learning inputs targets iterations =
+backpropagateSet : Net -> Float -> List (List Float, List Float) -> Int -> Net
+backpropagateSet net learning trainingTuples iterations =
     if iterations > 0 then
-        let
-            trainingTuples = List.map2 (\input target -> (input, target)) inputs targets
-        in
-            backpropagateSet
-                (List.foldr (\training net -> backpropagateSingle net learning (Tuple.first training) (Tuple.second training) 1) net trainingTuples)
-                learning inputs targets (iterations-1)
+        backpropagateSet
+            (List.foldr (\training net -> backpropagateSingle net learning (Tuple.first training) (Tuple.second training) 1) net trainingTuples)
+            learning trainingTuples (iterations-1)
     else
         net

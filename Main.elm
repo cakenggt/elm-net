@@ -11,6 +11,7 @@ import Maybe exposing (..)
 import Navigation
 import UrlParser as Url exposing ((</>), (<?>), s, int, stringParam, top, string)
 import Http exposing (encodeUri, decodeUri)
+import Time exposing (Time, millisecond)
 
 
 main : Program Never Model Msg
@@ -39,11 +40,12 @@ routeFunc =
 
 type alias Model =
   { net : Net.Net,
-    result : List Float,
-    input : String,
-    target : String,
-    error : Float,
-    backpropIter : Int
+    tests : List (List String, List String),
+    inputs : Int,
+    hiddens : Int,
+    outputs : Int,
+    backpropIter : Int,
+    running : Bool
   }
 
 
@@ -53,15 +55,16 @@ init : Navigation.Location -> (Model, Cmd Msg)
 init location =
   let
     params = routeParser (Url.parsePath routeFunc location)
+    tests = List.map2 (,) (stringToList params.inputs) (stringToList params.targets)
     inputSize = getSizeOfNestedList params.inputs
     outputSize = getSizeOfNestedList params.targets
   in
-    (Model (Net.createNetDeterministic inputSize inputSize outputSize) [0] params.inputs params.targets 0 1000, Cmd.none)
+    (Model (Net.createNetDeterministic inputSize inputSize outputSize) tests inputSize inputSize outputSize 1000 False, Cmd.none)
 
 routeParser : Maybe Route -> ParamsMap
 routeParser route =
   let
-    defaultParams = {inputs = "[[0,0],[1,0],[0,1],[1,1]]", targets = "[[0],[1],[1],[0]]"}
+    defaultParams = {inputs = "[[\"0\",\"0\"],[\"1\",\"0\"],[\"0\",\"1\"],[\"1\",\"1\"]]", targets = "[[\"0\"],[\"1\"],[\"1\"],[\"0\"]]"}
   in
     case route of
       Just params ->
@@ -86,46 +89,50 @@ maybeUri default maybe =
 type Msg
   = Randomize
   | NewNet Net.Net
-  | Forward
-  | NewInput String
-  | NewTarget String
   | Backprop
+  | TimedBackprop Time
   | NewBackprop String
   | UrlChange Navigation.Location
+  | IncInput
+  | DecInput
+  | IncHidden
+  | DecHidden
+  | IncOutput
+  | DecOutput
+  | ChangeTest Int NodeType Int String
+  | ToggleRunning
+
+type NodeType
+  = Input
+  | Hidden
+  | Output
 
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
   case msg of
     Randomize ->
-      let
-        inputSize = getSizeOfNestedList model.input
-        outputSize = getSizeOfNestedList model.target
-      in
-        (model, Net.createNetRandom inputSize inputSize outputSize NewNet)
+      (model, Net.createNetRandom model.inputs model.hiddens model.outputs NewNet)
 
     NewNet newNet ->
       ({model | net = newNet}, Cmd.none)
 
-    NewInput str ->
-        ({model | input = str}, Cmd.none)
-
-    NewTarget str ->
-        ({model | target = str}, Cmd.none)
-
-    Forward ->
-        let
-            input = withDefault [0,0] (List.head (stringToList model.input))
-            target = withDefault [0] (List.head (stringToList model.target))
-        in
-            ({model | result = Net.forwardPass model.net input, error = Net.getTotalError model.net input target}, Cmd.none)
-
     Backprop ->
         let
-            input = withDefault [0,0] (List.head (stringToList model.input))
-            target = withDefault [0] (List.head (stringToList model.target))
+            tests = testsToFloats model.tests
         in
-            ({model | net = Net.backpropagateSet model.net 1 (stringToList model.input) (stringToList model.target) model.backpropIter, error = Net.getTotalError model.net input target}, Cmd.none)
+            ( {model | net = Net.backpropagateSet model.net 1 tests model.backpropIter}
+            , Cmd.none)
+
+    TimedBackprop time ->
+        let
+            tests = testsToFloats model.tests
+        in
+            if model.running then
+                ( {model | net = Net.backpropagateSet model.net 1 tests 1}
+                , Cmd.none)
+            else
+                (model, Cmd.none)
 
     NewBackprop str ->
         let
@@ -136,13 +143,101 @@ update msg model =
     UrlChange _ ->
         (model, Cmd.none)
 
-stringToList : String -> List (List Float)
+    IncInput ->
+        ({model
+        | inputs = model.inputs + 1
+        , tests = List.map (\(input, output) -> (List.append input ["0"], output)) model.tests}
+        , Net.createNetRandom (model.inputs + 1) model.hiddens model.outputs NewNet)
+
+    DecInput ->
+        let
+            newNum = model.inputs - 1
+            finalNum = if newNum < 1 then 1 else newNum
+            tests = if newNum < 1 then model.tests else List.map (\(input, output) -> (pop input, output)) model.tests
+        in
+            ({model
+            | inputs = finalNum
+            , tests = tests}
+            , Net.createNetRandom finalNum model.hiddens model.outputs NewNet)
+
+    IncHidden ->
+        ({model
+        | hiddens = model.hiddens + 1}
+        , Net.createNetRandom model.inputs (model.hiddens + 1) model.outputs NewNet)
+
+    DecHidden ->
+        let
+            newNum = model.hiddens - 1
+            finalNum = if newNum < 1 then 1 else newNum
+        in
+            ({model
+            | hiddens = finalNum}
+            , Net.createNetRandom model.inputs finalNum model.outputs NewNet)
+
+    IncOutput ->
+        ({model
+        | outputs = model.outputs + 1
+        , tests = List.map (\(input, output) -> (input, List.append output ["0"])) model.tests}, Net.createNetRandom model.inputs model.hiddens (model.outputs + 1) NewNet)
+
+    DecOutput ->
+        let
+            newNum = model.outputs - 1
+            finalNum = if newNum < 1 then 1 else newNum
+            tests = if newNum < 1 then model.tests else List.map (\(input, output) -> (input, pop output)) model.tests
+        in
+            ({model
+            | outputs = finalNum
+            , tests = tests}, Net.createNetRandom model.inputs model.hiddens finalNum NewNet)
+
+    ChangeTest testIndex nodeType nodeIndex str ->
+        let
+          tests = List.indexedMap (\index test ->
+            if index == testIndex then
+                case nodeType of
+                    Input ->
+                        (List.indexedMap (\index node ->
+                            if index == nodeIndex then
+                                str
+                            else
+                                node) (Tuple.first test), Tuple.second test)
+                    Hidden ->
+                        test
+                    Output ->
+                        (Tuple.first test, List.indexedMap (\index node ->
+                            if index == nodeIndex then
+                                str
+                            else
+                                node) (Tuple.second test))
+            else
+                test) model.tests
+        in
+          ({model | tests = tests}, Cmd.none)
+
+    ToggleRunning ->
+        ({model | running = not model.running}, Cmd.none)
+
+pop : List a -> List a
+pop ls =
+    List.take ((List.length ls)-1) ls
+
+
+stringToList : String -> List (List String)
 stringToList str =
-    case decodeString (Json.Decode.list (Json.Decode.list float)) str of
+    case decodeString (Json.Decode.list (Json.Decode.list Json.Decode.string)) str of
         Ok ls ->
             ls
         Err _ ->
             [[]]
+
+testsToFloats : List (List String, List String) -> List (List Float, List Float)
+testsToFloats test =
+    List.map (\(input, output) ->
+        (testToFloat input
+        ,testToFloat output)) test
+
+testToFloat : List String -> List Float
+testToFloat test =
+    List.map (\s -> Result.withDefault 0 (String.toFloat s)) test
 
 getSizeOfNestedList : String -> Int
 getSizeOfNestedList str =
@@ -160,7 +255,7 @@ getSizeOfNestedList str =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-  Sub.none
+  Time.every millisecond TimedBackprop
 
 
 
@@ -170,14 +265,41 @@ subscriptions model =
 view : Model -> Html Msg
 view model =
   div []
-    [ h1 [] [ text (toString model.net) ]
-    , h2 [] [ text (toString model.result)]
-    , button [ onClick Randomize ] [ text "Randomize" ]
-    , input [ onInput NewInput, value model.input ] []
-    , input [ onInput NewTarget, value model.target ] []
-    , button [ onClick Forward ] [ text "Forward" ]
+    [ button [ onClick Randomize ] [ text "Randomize" ]
+    , createNetDimensions model
     , button [ onClick Backprop ] [ text "Backprop" ]
     , input [ onInput NewBackprop, value (toString model.backpropIter) ] []
-    , h2 [] [ text (toString model.error) ]
+    , createTests model
+    , div [onClick ToggleRunning] [ text (if model.running then "Pause" else "Start")]
     , display model.net
     ]
+
+createNetDimensions : Model -> Html Msg
+createNetDimensions model =
+  div []
+    [ (createNetDimension model.inputs IncInput DecInput)
+    , (createNetDimension model.hiddens IncHidden DecHidden)
+    , (createNetDimension model.outputs IncOutput DecOutput)]
+
+createNetDimension : Int -> Msg -> Msg -> Html Msg
+createNetDimension current incMsg decMsg =
+  div []
+    [ div [ onClick incMsg ] [ text "inc" ]
+    , div [] [ text (toString current) ]
+    , div [ onClick decMsg ] [ text "dec" ]]
+
+createTests : Model -> Html Msg
+createTests model =
+  div [] (List.indexedMap (\index test -> createTest model index test) model.tests)
+
+createTest : Model -> Int -> (List String, List String) -> Html Msg
+createTest model testIndex test =
+  div []
+    (List.concat
+    [ (List.indexedMap (\nodeIndex input -> createTestInput model testIndex Input nodeIndex input) (Tuple.first test))
+    , (List.indexedMap (\nodeIndex input -> createTestInput model testIndex Output nodeIndex input) (Tuple.second test))
+    , [text (toString (Net.forwardPass model.net (testToFloat (Tuple.first test))))] ])
+
+createTestInput : Model -> Int -> NodeType -> Int -> String -> Html Msg
+createTestInput model testIndex nodeType nodeIndex val =
+    input [ onInput (ChangeTest testIndex nodeType nodeIndex), value val] []

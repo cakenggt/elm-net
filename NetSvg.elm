@@ -85,6 +85,13 @@ generateWeightLines net width height =
 
 generateWeightLinesForSection : List Float -> List Coord -> List Coord -> List (Svg a)
 generateWeightLinesForSection weights fromCoords toCoords =
-    List.map2 (\((fromx, fromy), (tox, toy)) weight -> line [ x1 (toString fromx), y1 (toString fromy), x2 (toString tox), y2 (toString toy), strokeWidth (toString (abs (weight*2))), stroke "black"] [])
+    List.map2 generateWeightLine
         (List.concat (List.map (\from -> List.map (\to -> (from, to)) toCoords) fromCoords))
         weights
+
+generateWeightLine : (Coord, Coord) -> Float -> Svg a
+generateWeightLine ((fromx, fromy), (tox, toy)) weight =
+    let
+        color = if weight < 0 then "grey" else "black"
+    in
+        line [ x1 (toString fromx), y1 (toString fromy), x2 (toString tox), y2 (toString toy), strokeWidth (toString (abs (weight*2))), stroke color] []
