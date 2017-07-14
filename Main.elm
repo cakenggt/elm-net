@@ -101,6 +101,8 @@ type Msg
   | DecOutput
   | ChangeTest Int NodeType Int String
   | ToggleRunning
+  | AddTest
+  | RemoveTest Int
 
 type NodeType
   = Input
@@ -216,6 +218,16 @@ update msg model =
     ToggleRunning ->
         ({model | running = not model.running}, Cmd.none)
 
+    AddTest ->
+        ({model
+        | tests = List.append model.tests [(List.repeat model.inputs "0", List.repeat model.outputs "0")]}
+        , Cmd.none)
+
+    RemoveTest index ->
+        ({model
+        | tests = List.filterMap (\(i, test) -> if i /= index then Just test else Nothing) (List.indexedMap (,) model.tests)}
+        , Cmd.none)
+
 pop : List a -> List a
 pop ls =
     List.take ((List.length ls)-1) ls
@@ -290,7 +302,9 @@ createNetDimension current incMsg decMsg =
 
 createTests : Model -> Html Msg
 createTests model =
-  div [] (List.indexedMap (\index test -> createTest model index test) model.tests)
+  div [] (List.append
+  (List.indexedMap (\index test -> createTest model index test) model.tests)
+  [span [onClick AddTest] [text "+"]])
 
 createTest : Model -> Int -> (List String, List String) -> Html Msg
 createTest model testIndex test =
@@ -298,7 +312,8 @@ createTest model testIndex test =
     (List.concat
     [ (List.indexedMap (\nodeIndex input -> createTestInput model testIndex Input nodeIndex input) (Tuple.first test))
     , (List.indexedMap (\nodeIndex input -> createTestInput model testIndex Output nodeIndex input) (Tuple.second test))
-    , [text (toString (Net.forwardPass model.net (testToFloat (Tuple.first test))))] ])
+    , [text (toString (Net.forwardPass model.net (testToFloat (Tuple.first test))))]
+    , [span [onClick (RemoveTest testIndex)] [text "-"]]])
 
 createTestInput : Model -> Int -> NodeType -> Int -> String -> Html Msg
 createTestInput model testIndex nodeType nodeIndex val =
