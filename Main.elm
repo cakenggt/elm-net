@@ -123,7 +123,7 @@ update msg model =
         let
             tests = testsToFloats model.tests
         in
-            ( {model | net = Net.backpropagateSet model.net 1 tests model.backpropIter}
+            ( {model | net = Net.backpropagateSet model.net 0.1 tests model.backpropIter}
             , Cmd.none)
 
     TimedBackprop time ->
